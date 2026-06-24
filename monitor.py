@@ -31,9 +31,6 @@ TARGET_TIMES = tuple(
 )
 STATE_PATH = Path(os.getenv("STATE_PATH", ".monitor-state.json"))
 TIMEOUT_SECONDS = 30
-MONITOR_TIMEZONE = os.getenv("MONITOR_TIMEZONE", "Europe/Faroe")
-
-
 def schedule_allows(now: datetime) -> tuple[bool, str]:
     target_day = now.date().isoformat()
 

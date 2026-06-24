@@ -2,9 +2,19 @@ name: Monitor Kalsoy ferry tickets
 
 on:
   schedule:
-    # Trigger at :17 and :47. monitor.py applies the stepped cadence in
-    # Europe/Faroe time before making any request to the booking website.
-    - cron: "17,47 * * * *"
+    # GitHub cron uses UTC. The Faroe Islands are UTC+1 during June/July.
+    # Through June 28 local time: every 2 hours at :17.
+    - cron: "17 1-23/2 24-27 6 *"
+    - cron: "17 1-21/2 28 6 *"
+
+    # June 29 through July 1 local time: every hour at :17.
+    - cron: "17 23 28 6 *"
+    - cron: "17 * 29-30 6 *"
+    - cron: "17 0-22 1 7 *"
+
+    # July 2 local time: every 30 minutes at :17 and :47.
+    - cron: "17,47 23 1 7 *"
+    - cron: "17,47 0-22 2 7 *"
   workflow_dispatch:
 
 permissions:
@@ -37,7 +47,6 @@ jobs:
           TARGET_DATE: "02. Jul. 2026"
           TARGET_DATE_API: "02072026"
           TARGET_TIMES: "08:00,09:00"
-          MONITOR_TIMEZONE: "Europe/Faroe"
         run: python monitor.py
 
       - name: Save notification state
