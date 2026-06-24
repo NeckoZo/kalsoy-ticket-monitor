@@ -1,0 +1,48 @@
+name: Monitor Kalsoy ferry tickets
+
+on:
+  schedule:
+    # Trigger at :17 and :47. monitor.py applies the stepped cadence in
+    # Europe/Faroe time before making any request to the booking website.
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kalsoy-ticket-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Restore notification state
+        id: state-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .monitor-state.json
+          key: kalsoy-state-${{ github.run_id }}
+          restore-keys: |
+            kalsoy-state-
+
+      - name: Check ticket availability
+        env:
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          TARGET_DATE: "02. Jul. 2026"
+          TARGET_DATE_API: "02072026"
+          TARGET_TIMES: "08:00,09:00"
+          MONITOR_TIMEZONE: "Europe/Faroe"
+        run: python monitor.py
+
+      - name: Save notification state
+        if: always() && hashFiles('.monitor-state.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .monitor-state.json
+          key: kalsoy-state-${{ github.run_id }}
