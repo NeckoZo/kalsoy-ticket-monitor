@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Monitor SSL Klaksvík -> Kalsoy vehicle availability and notify via ServerChan."""
+"""Monitor SSL Klaksvík <-> Kalsoy vehicle availability and notify via ServerChan."""
 
 from __future__ import annotations
 
@@ -26,11 +26,32 @@ BOOKING_URL = (
 )
 TARGET_DATE = os.getenv("TARGET_DATE", "02. Jul. 2026")
 TARGET_DATE_API = os.getenv("TARGET_DATE_API", "02072026")
-TARGET_TIMES = tuple(
-    item.strip() for item in os.getenv("TARGET_TIMES", "08:00,09:00").split(",") if item.strip()
-)
 STATE_PATH = Path(os.getenv("STATE_PATH", ".monitor-state.json"))
 TIMEOUT_SECONDS = 30
+
+
+def target_times(env_name: str, default: str) -> tuple[str, ...]:
+    return tuple(
+        item.strip() for item in os.getenv(env_name, default).split(",") if item.strip()
+    )
+
+
+ROUTES = (
+    {
+        "key": "outbound",
+        "selected_route_id": "10002",
+        "label": "Klaksvík → Kalsoy",
+        "target_times": target_times("OUTBOUND_TARGET_TIMES", "08:00,09:00"),
+    },
+    {
+        "key": "return",
+        "selected_route_id": "10003",
+        "label": "Kalsoy → Klaksvík",
+        "target_times": target_times("RETURN_TARGET_TIMES", "15:10,16:30"),
+    },
+)
+
+
 def schedule_allows(now: datetime) -> tuple[bool, str]:
     target_day = now.date().isoformat()
 
@@ -61,7 +82,7 @@ def should_check_now() -> tuple[bool, str]:
     return schedule_allows(faroe_now)
 
 
-def request_page() -> str:
+def request_page(selected_route_id: str) -> str:
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -70,7 +91,7 @@ def request_page() -> str:
         "Accept-Language": "en-US,en;q=0.9",
     }
     stored_values = urllib.parse.urlsplit(BOOKING_URL).query.lstrip("&")
-    route_data = f"?&SelectedRouteId=10002&{stored_values}"
+    route_data = f"?&SelectedRouteId={selected_route_id}&{stored_values}"
     api_url = "https://booking.ssl.fo/Booking/GetTrips?" + urllib.parse.urlencode(
         {"data": route_data, "date": TARGET_DATE_API}
     )
@@ -99,15 +120,28 @@ def parse_availability(page: str) -> dict[str, int]:
 
 def load_state() -> dict:
     try:
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"available": False}
+        return {"routes": {}}
+
+    if "routes" in state and isinstance(state["routes"], dict):
+        return state
+
+    # Migration from the original single-direction state file.
+    return {
+        "routes": {
+            "outbound": {
+                "available": bool(state.get("available", False)),
+                "counts": state.get("counts", {}),
+            }
+        }
+    }
 
 
-def save_state(available: bool, counts: dict[str, int]) -> None:
+def save_state(route_states: dict[str, dict]) -> None:
     STATE_PATH.write_text(
         json.dumps(
-            {"available": available, "counts": counts},
+            {"routes": route_states},
             ensure_ascii=False,
             indent=2,
         ),
@@ -115,23 +149,30 @@ def save_state(available: bool, counts: dict[str, int]) -> None:
     )
 
 
-def notify_serverchan(counts: dict[str, int]) -> None:
+def notify_serverchan(newly_available: dict[str, dict[str, int]]) -> None:
     sendkey = os.getenv("SERVERCHAN_SENDKEY", "").strip()
     if not sendkey:
         raise RuntimeError("Missing SERVERCHAN_SENDKEY")
 
-    available_lines = [
-        f"- **{time}**：剩余 {count} 个车位"
-        for time, count in counts.items()
-        if count > 0
-    ]
-    title = "Klaksvík → Kalsoy 有船票了"
+    available_lines: list[str] = []
+    for route in ROUTES:
+        route_counts = newly_available.get(route["key"], {})
+        route_lines = [
+            f"- **{time}**：剩余 {count} 个车位"
+            for time, count in route_counts.items()
+            if count > 0
+        ]
+        if route_lines:
+            available_lines.extend([f"### {route['label']}", *route_lines, ""])
+
+    title = "Klaksvík ↔ Kalsoy 有船票了"
     description = "\n".join(
         [
             f"日期：**2026-07-02**",
             "",
-            *available_lines,
+            "本次发现以下目标班次有余票：",
             "",
+            *available_lines,
             "请尽快打开订票页面完成预订：",
             "",
             BOOKING_URL,
@@ -159,44 +200,62 @@ def main() -> int:
         return 0
 
     print(f"Schedule gate accepted this run: {schedule_reason}")
-    page = request_page()
-    all_counts = parse_availability(page)
-    missing = [time for time in TARGET_TIMES if time not in all_counts]
-    if missing:
-        visible_times = re.findall(r"\b\d{2}:\d{2}\b", page)
-        returned_date = re.findall(
-            r'name="SelectedDate"[^>]*value="([^"]*)"', page, flags=re.I
-        )
-        returned_stored_values = re.findall(
-            r'name="_storedValues"[^>]*value="([^"]*)"', page, flags=re.I
-        )
-        cleaned_page = re.sub(
-            r"<(?:script|style)\b.*?</(?:script|style)>", " ", page, flags=re.I | re.S
-        )
-        diagnostic_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cleaned_page))
-        raise RuntimeError(
-            f"Could not find target trips {missing}; parsed trips: {all_counts}; "
-            f"times visible in response: {visible_times[:20]}; "
-            f"returned date: {returned_date[:1]}; "
-            f"stored values present: {bool(returned_stored_values)}; "
-            f"page text: {html.unescape(diagnostic_text[:800]).strip()}"
-        )
-
-    counts = {time: all_counts[time] for time in TARGET_TIMES}
-    currently_available = any(count > 0 for count in counts.values())
     previous_state = load_state()
-    previously_available = bool(previous_state.get("available", False))
+    previous_routes = previous_state.get("routes", {})
+    route_states: dict[str, dict] = {}
+    newly_available: dict[str, dict[str, int]] = {}
 
-    print(f"{TARGET_DATE}: {counts}")
-    if currently_available and not previously_available:
-        notify_serverchan(counts)
+    for route in ROUTES:
+        page = request_page(route["selected_route_id"])
+        all_counts = parse_availability(page)
+        missing = [time for time in route["target_times"] if time not in all_counts]
+        if missing:
+            visible_times = re.findall(r"\b\d{2}:\d{2}\b", page)
+            returned_date = re.findall(
+                r'name="SelectedDate"[^>]*value="([^"]*)"', page, flags=re.I
+            )
+            returned_stored_values = re.findall(
+                r'name="_storedValues"[^>]*value="([^"]*)"', page, flags=re.I
+            )
+            cleaned_page = re.sub(
+                r"<(?:script|style)\b.*?</(?:script|style)>",
+                " ",
+                page,
+                flags=re.I | re.S,
+            )
+            diagnostic_text = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", cleaned_page))
+            raise RuntimeError(
+                f"Could not find target trips {missing} for {route['label']}; "
+                f"parsed trips: {all_counts}; "
+                f"times visible in response: {visible_times[:20]}; "
+                f"returned date: {returned_date[:1]}; "
+                f"stored values present: {bool(returned_stored_values)}; "
+                f"page text: {html.unescape(diagnostic_text[:800]).strip()}"
+            )
+
+        counts = {time: all_counts[time] for time in route["target_times"]}
+        currently_available = any(count > 0 for count in counts.values())
+        previously_available = bool(
+            previous_routes.get(route["key"], {}).get("available", False)
+        )
+        route_states[route["key"]] = {
+            "available": currently_available,
+            "counts": counts,
+        }
+        if currently_available and not previously_available:
+            newly_available[route["key"]] = counts
+
+        print(f"{TARGET_DATE} {route['label']}: {counts}")
+
+    if newly_available:
+        notify_serverchan(newly_available)
         print("Availability detected; ServerChan notification sent.")
-    elif currently_available:
+    elif any(route_state["available"] for route_state in route_states.values()):
         print("Still available; notification already sent.")
     else:
         print("No target availability.")
 
-    save_state(currently_available, counts)
+    save_state(route_states)
     return 0
 
 
