@@ -47,7 +47,7 @@ ROUTES = (
         "key": "return",
         "selected_route_id": "10003",
         "label": "Kalsoy → Klaksvík",
-        "target_times": target_times("RETURN_TARGET_TIMES", "15:10,16:30"),
+        "target_times": target_times("RETURN_TARGET_TIMES", "15:10,16:30,17:35"),
     },
 )
 
@@ -56,10 +56,10 @@ def schedule_allows(now: datetime) -> tuple[bool, str]:
     target_day = now.date().isoformat()
 
     if target_day < "2026-06-29":
-        allowed = now.minute < 30 and now.hour % 2 == 0
+        allowed = True
         cadence = "every 2 hours"
     elif target_day < "2026-07-02":
-        allowed = now.minute < 30
+        allowed = True
         cadence = "every hour"
     elif target_day == "2026-07-02":
         allowed = True
@@ -78,6 +78,10 @@ def should_check_now() -> tuple[bool, str]:
 
     # The monitored period is in June/July, when the Faroe Islands use WEST
     # (UTC+1). Using a fixed offset avoids requiring the optional tzdata package.
+    # GitHub scheduled workflows can start tens of minutes late, so the script
+    # must not reject a scheduled run based on the actual start minute. The
+    # segmented cron already controls the cadence; this guard only prevents the
+    # yearly cron expression from running outside the 2026 monitoring window.
     faroe_now = datetime.now(timezone.utc) + timedelta(hours=1)
     return schedule_allows(faroe_now)
 

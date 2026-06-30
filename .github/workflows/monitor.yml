@@ -47,7 +47,7 @@ jobs:
           TARGET_DATE: "02. Jul. 2026"
           TARGET_DATE_API: "02072026"
           OUTBOUND_TARGET_TIMES: "08:00,09:00"
-          RETURN_TARGET_TIMES: "15:10,16:30"
+          RETURN_TARGET_TIMES: "15:10,16:30,17:35"
         run: python monitor.py
 
       - name: Save notification state
