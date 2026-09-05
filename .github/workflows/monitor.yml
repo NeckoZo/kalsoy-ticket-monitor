@@ -2,19 +2,9 @@ name: Monitor Kalsoy ferry tickets
 
 on:
   schedule:
-    # GitHub cron uses UTC. The Faroe Islands are UTC+1 during June/July.
-    # Through June 28 local time: every 2 hours at :17.
-    - cron: "17 1-23/2 24-27 6 *"
-    - cron: "17 1-21/2 28 6 *"
-
-    # June 29 through July 1 local time: every hour at :17.
-    - cron: "17 23 28 6 *"
-    - cron: "17 * 29-30 6 *"
-    - cron: "17 0-22 1 7 *"
-
-    # July 2 local time: every 30 minutes at :17 and :47.
-    - cron: "17,47 23 1 7 *"
-    - cron: "17,47 0-22 2 7 *"
+    # The public schedule contains no itinerary. The script enforces the actual
+    # monitoring window and cadence from encrypted repository secrets.
+    - cron: "17,47 * * * *"
   workflow_dispatch:
 
 permissions:
@@ -44,10 +34,10 @@ jobs:
       - name: Check ticket availability
         env:
           SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
-          TARGET_DATE: "02. Jul. 2026"
-          TARGET_DATE_API: "02072026"
-          OUTBOUND_TARGET_TIMES: "08:00,09:00"
-          RETURN_TARGET_TIMES: "15:10,16:30,17:35"
+          BOOKING_URL: ${{ secrets.BOOKING_URL }}
+          TARGET_DATE_ISO: ${{ secrets.TARGET_DATE_ISO }}
+          OUTBOUND_TARGET_TIMES: ${{ secrets.OUTBOUND_TARGET_TIMES }}
+          RETURN_TARGET_TIMES: ${{ secrets.RETURN_TARGET_TIMES }}
         run: python monitor.py
 
       - name: Save notification state

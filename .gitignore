@@ -1,0 +1,8 @@
+.env
+.env.*
+!.env.example
+.monitor-state.json
+__pycache__/
+*.py[cod]
+*.local
+secrets.*

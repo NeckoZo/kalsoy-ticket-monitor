@@ -1,85 +1,54 @@
-# Klaksvík → Kalsoy 余票监控
+# Klaksvík ↔ Kalsoy 余票监控
 
-监控 2026 年 7 月 2 日以下目标船班：
+按设定频率检查目标船班；当余票从 0 变为大于 0 时，通过 Server酱发送微信通知。
 
-- 去程 Klaksvík → Kalsoy：08:00、09:00
-- 回程 Kalsoy → Klaksvík：15:10、16:30、17:35
+仓库可以公开：SendKey、出行日期、目标班次和含车辆参数的订票 URL 均通过
+GitHub Actions 加密 Secrets 注入，源码和正常运行日志不会显示这些值。
 
-按法罗群岛当地时间自动调整检查频率；当余票从 0 变为大于 0 时，通过
-Server酱推送微信通知：
+## 配置 GitHub Actions Secrets
 
-- 2026 年 6 月 29 日之前：每 2 小时
-- 2026 年 6 月 29 日至 7 月 1 日：每 1 小时
-- 2026 年 7 月 2 日：每 30 分钟
-- 2026 年 7 月 2 日之后：停止访问订票网站
+进入仓库的 `Settings` → `Secrets and variables` → `Actions`，创建以下
+Repository secrets：
 
-工作流使用分段 Cron，只在对应阶段需要检查时才启动。程序内部仍保留
-2026 年日期校验，避免 GitHub 的年度 Cron 在以后年份再次访问订票网站。
-GitHub 定时任务可能延迟几十分钟启动；只要任务已经被 GitHub 触发，脚本会继续检查，不再按实际启动分钟二次跳过。
+- `SERVERCHAN_SENDKEY`：Server酱 SendKey。
+- `BOOKING_URL`：在 SSL 订票页选好路线、乘客与车辆参数后得到的完整 URL。
+- `TARGET_DATE_ISO`：目标日期，格式为 `YYYY-MM-DD`。
+- `OUTBOUND_TARGET_TIMES`：去程目标班次，多个时间以英文逗号分隔。
+- `RETURN_TARGET_TIMES`：回程目标班次，多个时间以英文逗号分隔。
 
-## 1. 获取 Server酱 SendKey
+不要把真实值写进源码、README、Issue、提交信息或 Actions 日志。GitHub Secret
+一旦保存便不会再次显示；需要修改时直接覆盖同名 Secret。
 
-1. 打开 <https://sct.ftqq.com/sendkey>。
-2. 使用微信登录。
-3. 按页面提示完成消息通道设置。
-4. 复制页面显示的 `SendKey`，不要公开或写进代码。
-5. 建议先在 Server酱页面发送一条测试消息，确认微信能收到。
+## 运行方式
 
-## 2. 创建 GitHub 仓库
+工作流每 30 分钟触发一次，但脚本会在内部控制实际访问频率：
 
-1. 登录 GitHub，点击右上角 `+` → `New repository`。
-2. 仓库名可填 `kalsoy-ticket-monitor`。
-3. 建议选择 `Private`，然后创建仓库。
-4. 将本目录内的全部内容上传到仓库根目录。必须保留：
-   - `monitor.py`
-   - `.github/workflows/monitor.yml`
+- 目标日前 8 至 4 天：每 2 小时检查一次。
+- 目标日前 3 至 1 天：每小时检查一次。
+- 目标日当天：每 30 分钟检查一次。
+- 其他日期：只启动工作流并立即退出，不访问订票网站。
 
-如果网页上传时看不到 `.github` 隐藏目录，可以在仓库内逐级创建：
-`.github` → `workflows` → `monitor.yml`。
+GitHub 定时任务可能因平台负载延迟。每个方向独立记录通知状态；持续有票时不会
+重复推送，重新变为无票后再放票会再次通知。本程序只监控和通知，不会自动下单
+或付款。
 
-## 3. 保存 SendKey
+## 手动测试
 
-在 GitHub 仓库中进入：
-
-`Settings` → `Secrets and variables` → `Actions` → `New repository secret`
-
-- Name：`SERVERCHAN_SENDKEY`
-- Secret：粘贴 Server酱的 SendKey
-
-保存后，密钥不会显示在代码或运行日志里。
-
-## 4. 手动测试
-
-1. 打开仓库的 `Actions` 页面。
-2. 左侧选择 `Monitor Kalsoy ferry tickets`。
-3. 点击 `Run workflow` → `Run workflow`。
-4. 等待运行结束，点进运行记录查看日志。
-
-目前没有余票时，正常日志应类似：
-
-```text
-02. Jul. 2026 Klaksvík → Kalsoy: {'08:00': 0, '09:00': 0}
-02. Jul. 2026 Kalsoy → Klaksvík: {'15:10': 0, '16:30': 0, '17:35': 0}
-No target availability.
-```
-
-因为当前无票，首次测试不会发送微信。这是正常行为。
-
-## 5. 测试微信推送是否配置正确
-
-最简单且安全的方法是在 Server酱网站提供的测试功能中发送测试消息。
-不要为了测试而修改监控程序中的余票判断。
-
-## 行为说明
-
-- 去程 08:00/09:00 或回程 15:10/16:30/17:35 任意目标班次有票，就会推送。
-- 每个方向独立记录状态：去程已通知过，不会阻止回程第一次有票时通知。
-- 持续有票期间只推送一次，避免重复刷屏。
-- 如果某个方向的目标余票重新变为 0，之后再次放票会再次推送。
-- GitHub 定时任务可能因平台负载延迟几分钟，不保证精确到秒。
-- 本程序只监控和通知，不会自动下单或付款。
+打开仓库 `Actions` 页面，选择 `Monitor Kalsoy ferry tickets`，点击
+`Run workflow`。日志只会显示任务是否跳过以及各方向是否检查完成，不会输出日期、
+具体班次、余票数量、订票 URL 或 SendKey。缓存中的通知状态也使用密钥派生
+的 HMAC 保护，不以明文保存班次或余票状态。
 
 ## 停止监控
 
-进入 GitHub 仓库的 `Actions` 页面，选择对应工作流，点击右上角菜单并选择
-`Disable workflow`。成功订票后建议立即停用。
+成功订票后，在仓库 `Actions` 页面停用该工作流，或删除相关 Repository secrets。
+
+## 本地运行
+
+在当前终端会话中设置与上述同名的环境变量，然后运行：
+
+```bash
+python monitor.py
+```
+
+`.env`、本地状态文件和常见敏感配置已加入 `.gitignore`。
